@@ -79,100 +79,108 @@ namespace NfsFemaForms
       {
          if (!Support.SetLicense())
             return;
-         DoneFormsSet = File.ReadAllLines(@"F:\DoneForms.txt")
-            .Where(x => !string.IsNullOrEmpty(x))
-            .Select(l => l.Split('|')[3])
-            .Select(x => x.Split(' ').ToArray())
-            .Select(x => x.Skip(1).Take(x.Length - 2).ToArray())
-            .Select(x => string.Join(" ", x))
-            .ToHashSet();
+         var doParse = false;
+         if (doParse)
+         {
+            DoneFormsSet = File.ReadAllLines(@"F:\DoneForms.txt")
+               .Where(x => !string.IsNullOrEmpty(x))
+               .Select(l => l.Split('|')[3])
+               .Select(x => x.Split(' ').ToArray())
+               .Select(x => x.Skip(1).Take(x.Length - 2).ToArray())
+               .Select(x => string.Join(" ", x))
+               .ToHashSet();
             //.Select(x => x.GetType()  " ".Join())
             //.ToHashSet<string>();
-         var state = 0;
-         var keeper = new Dictionary<string, OcrRecord>();
-         OcrRecord curRecord = null;
-         var sb = new StringBuilder();
-         var lastline = "";
-         var currentMaster = "";
-         foreach (var line in File.ReadAllLines(@"F:\EC_logs.txt"))
-         {
-            switch (state)
+            var state = 0;
+            var keeper = new Dictionary<string, OcrRecord>();
+            OcrRecord curRecord = null;
+            var sb = new StringBuilder();
+            var lastline = "";
+            var currentMaster = "";
+            foreach (var line in File.ReadAllLines(@"F:\EC_logs.txt"))
             {
-               case 0:
-                  if (line.Contains("|Recognized"))
-                  {
-                     var tup = OcrRecord.FindAppID(line);
-                     
-                     if (tup.Item3 > 0)
+               switch (state)
+               {
+                  case 0:
+                     if (line.Contains("|Recognized"))
                      {
-                        curRecord = OcrRecord.GetOrCreate(tup.Item1, keeper);
-                        curRecord.Files.Add(tup.Item2);
+                        var tup = OcrRecord.FindAppID(line);
+
+                        if (tup.Item3 > 0)
+                        {
+                           curRecord = OcrRecord.GetOrCreate(tup.Item1, keeper);
+                           curRecord.Files.Add(tup.Item2);
+                        }
+
+                        state = 1;
                      }
-                     state = 1;
-                  }
-                  else if (line.Contains("|Unrecognized"))
-                  {
-                     var tup = OcrRecord.FindAppID(line);
-                     if (tup.Item3 > 0)
+                     else if (line.Contains("|Unrecognized"))
                      {
-                        curRecord = OcrRecord.GetOrCreate(tup.Item1, keeper);
-                        curRecord.Files.Add(tup.Item2);
+                        var tup = OcrRecord.FindAppID(line);
+                        if (tup.Item3 > 0)
+                        {
+                           curRecord = OcrRecord.GetOrCreate(tup.Item1, keeper);
+                           curRecord.Files.Add(tup.Item2);
+                        }
+
+                        state = 0;
                      }
-                     state = 0;
-                  }
 
-                  break;
-               case 1:
-                  if (line.StartsWith("["))
-                  {
-                     currentMaster = lastline;
-                     Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
-                     curRecord.MasterForms.Add(currentMaster);
+                     break;
+                  case 1:
+                     if (line.StartsWith("["))
+                     {
+                        currentMaster = lastline;
+                        Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
+                        curRecord.MasterForms.Add(currentMaster);
 
-                     sb = new StringBuilder();
-                     //sb.Append(line);
+                        sb = new StringBuilder();
+                        //sb.Append(line);
+                        sb.AppendLine(line);
+                        state = 2;
+                     }
+
+                     break;
+                  case 2:
                      sb.AppendLine(line);
-                     state = 2;
-                  }
-
-                  break;
-               case 2:
-                  sb.AppendLine(line);
-                  if (line.StartsWith("]"))
-                  {
-                     //File.WriteAllText(@"F:\samp.json", sb.ToString());
-                     var jArray = Newtonsoft.Json.Linq.JArray.Parse(sb.ToString());
-                     //Debug.WriteLine(jArray.Count);
-                     foreach (var jToken in jArray)
+                     if (line.StartsWith("]"))
                      {
-                        var name = jToken.Value<string>("Name");
-                        var bounds = jToken.Value<string>("Bounds");
-                        var res = jToken["ResultDefault"];
-                        if (res != null)
+                        //File.WriteAllText(@"F:\samp.json", sb.ToString());
+                        var jArray = Newtonsoft.Json.Linq.JArray.Parse(sb.ToString());
+                        //Debug.WriteLine(jArray.Count);
+                        foreach (var jToken in jArray)
                         {
-                           var f = new OcrField(name, "text", bounds, res);
-                           Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
-                           curRecord.AddField(f);
+                           var name = jToken.Value<string>("Name");
+                           var bounds = jToken.Value<string>("Bounds");
+                           var res = jToken["ResultDefault"];
+                           if (res != null)
+                           {
+                              var f = new OcrField(name, "text", bounds, res);
+                              Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
+                              curRecord.AddField(f);
+                           }
+                           else
+                           {
+                              res = jToken["Result"];
+                              var f = new OcrField(name, "omr", bounds, res);
+                              Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
+                              curRecord.AddField(f);
+                           }
                         }
-                        else
-                        {
-                           res = jToken["Result"];
-                           var f = new OcrField(name, "omr", bounds, res);
-                           Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
-                           curRecord.AddField(f);
-                        }
-                     }
-                     //sb.Append(line);
-                     state = 0;
-                  }
 
-                  break;
+                        //sb.Append(line);
+                        state = 0;
+                     }
+
+                     break;
+               }
+
+               lastline = line;
             }
 
-            lastline = line;
+            File.WriteAllText(@"F:\EC_sample_OCR.json",
+               JsonConvert.SerializeObject(keeper.Values, Formatting.Indented));
          }
-
-         File.WriteAllText(@"F:\EC_sample_OCR.json", JsonConvert.SerializeObject(keeper.Values,Formatting.Indented));
 
          Boolean bLocked = RasterSupport.IsLocked(RasterSupportType.Forms);
          if (bLocked)
@@ -235,6 +243,9 @@ namespace NfsFemaForms
 #endif // FOR_NUGET
 
          UpdateControls();
+         this._menuItemRecognizeMultipleForms_Click(this, null);
+         Application.Exit();
+
       }
 
       private void UpdateControls()
@@ -315,7 +326,7 @@ namespace NfsFemaForms
                fbd.ShowNewFolderButton = false;
                fbd.ShowFullPathInEditBox = true;
                fbd.ShowEditBox = true;
-               if (fbd.ShowDialog(this) == DialogResult.OK)
+               if (true) //(fbd.ShowDialog(this) == DialogResult.OK)
                {
                   canceled = false;
                   string[] files = Directory.GetFiles(fbd.SelectedPath).Where(x => !DoneFormsSet.Contains(x)).ToArray();
@@ -371,7 +382,7 @@ namespace NfsFemaForms
          LineRemoveCommand command = new LineRemoveCommand();
          command.Type = type;
          command.Flags = LineRemoveCommandFlags.RemoveEntire;
-         command.MaximumLineWidth = 8;
+         command.MaximumLineWidth = 6;
          command.MinimumLineLength = 30;
          command.MaximumWallPercent = 10;
          command.Wall = 10;
@@ -471,9 +482,18 @@ namespace NfsFemaForms
       private string GetSamplesPath()
       {
          string formsDir;
+         var args = System.Environment.GetCommandLineArgs();
+         formsDir = @"F:\OCR\Single";
+         if (args.Length > 1)
+         {
+            formsDir = args[1];
+         }
+         return formsDir;
+         /*
          if (_rb_OCR.Checked == true)
             //formsDir = DemosGlobal.ImagesFolder + "\\" + @"Forms\Forms to be Recognized\OCR";
-            formsDir = @"F:\OCR\Interesting";
+            //formsDir = @"F:\OCR\EC201811";
+            formsDir = @"F:\OCR\Single";
          else if (_rb_OCR_ICR.Checked == true)
             formsDir = DemosGlobal.ImagesFolder + "\\" + @"Forms\Forms to be Recognized\OCR_ICR";
          else if (_rb_DL.Checked == true)
@@ -484,6 +504,7 @@ namespace NfsFemaForms
             formsDir = DemosGlobal.ImagesFolder + "\\" + @"Forms\Forms to be Recognized\OMR";
 
          return formsDir;
+         */
       }
 
       private void ShowResults(List<FilledForm> recognizedForms)
@@ -495,7 +516,7 @@ namespace NfsFemaForms
                //Show the results
                _lblStatus.Text = "Status: Complete";
                RecognitionResult resultDialog = new RecognitionResult(recognizedForms);
-               resultDialog.ShowDialog(this);
+               //resultDialog.ShowDialog(this);
             }
             else
                _lblStatus.Text = "Status: No Forms Recognized";
@@ -804,7 +825,7 @@ namespace NfsFemaForms
             if (results[maxIndex].Confidence < results[i].Confidence)
                maxIndex = i;
          }
-         if (results[maxIndex].Confidence < 30)
+         if (results[maxIndex].Confidence < 80)
             maxIndex = -1;//no match
          return maxIndex;
       }
@@ -879,13 +900,18 @@ namespace NfsFemaForms
                string fieldsfName = String.Concat(Path.GetFileNameWithoutExtension(masterFormAttributes[index]), ".xml");
                string fieldsfullPath = Path.Combine(Path.GetDirectoryName(masterFormAttributes[index]), fieldsfName);
                form.Master = LoadMasterForm(masterFormAttributes[index], fieldsfullPath);
+               var omrMaster = LoadMasterForm(masterFormAttributes[index], fieldsfullPath);
                FormPages formPages = form.Master.ProcessingPages;
+               FormPages omrFormPages = omrMaster.ProcessingPages;
+
                List<PageAlignment> alignments = new List<PageAlignment>();
                for (int i = 0; i < results[index].PageResults.Count; i++)
                   alignments.Add(results[index].PageResults[i].Alignment);
                //recognitionEngine.FillFieldsInformation(form.Master.Attributes, form.Attributes, formPages, alignments);
                recognitionEngine.FillFieldsInformation(form.Image, form.Master.Attributes, form.Attributes, formPages, alignments);
+               recognitionEngine.FillFieldsInformation(form.OmrImage, form.Master.Attributes, form.Attributes, omrFormPages, alignments);
                form.ProcessingPages = formPages;
+               form.OmrProcessingPages = omrFormPages;
                form.Result = results[index];
                return true;
             }
@@ -1031,7 +1057,7 @@ namespace NfsFemaForms
          return count;
       }
 
-      public void ProcessForm(FilledForm form)
+      public void ProcessForm(FilledForm form, bool doOmr = false)
       {
          if (form.Master.ProcessingPages == null)
             return; //no fields
@@ -1053,7 +1079,8 @@ namespace NfsFemaForms
          Application.DoEvents();
          Stopwatch stopWatch = new Stopwatch();
          stopWatch.Start();
-         processingEngine.Process(form.Image, form.Alignment);
+         
+         processingEngine.Process(!doOmr ? form.Image : form.OmrImage, form.Alignment);
          stopWatch.Stop();
          AddOperationTime(form.Name, "Process Form", stopWatch.Elapsed, false);
          Application.DoEvents();
@@ -1062,7 +1089,7 @@ namespace NfsFemaForms
       }
 
       //This function is used to cleanup images
-      private void CleanupImage(RasterImage imageToClean, string fileName, int startIndex, int count)
+      private void CleanupImage(RasterImage imageToClean, string fileName, int startIndex, int count, bool forceOmr = false)
       {
          Stopwatch stopWatch = new Stopwatch();
          try
@@ -1070,7 +1097,7 @@ namespace NfsFemaForms
             stopWatch.Start();
             int oldPageNumber = imageToClean.Page;
             //Deskew
-            if (_rb_Omr.Checked)
+            if (_rb_Omr.Checked || forceOmr)
             {
                for (int i = startIndex; i < startIndex + count; i++)
                {
@@ -1182,9 +1209,11 @@ namespace NfsFemaForms
          bool bRecognizedSimple = false;
          bool bRecognizedComplex = false;
 
-         bRecognizedSimple = RecognizeFormSimple(form);
+         //bRecognizedSimple = RecognizeFormSimple(form);
          if (!bRecognizedSimple)
             bRecognizedComplex = RecognizeFormComplex(form);
+         form.OmrImage = form.Image.CloneAll();
+         CleanupImage(form.OmrImage, form.Name, 1, 1,forceOmr: true);
          var colorResolution =
             new ColorResolutionCommand
             {
@@ -1193,9 +1222,9 @@ namespace NfsFemaForms
                PaletteFlags = Leadtools.ImageProcessing.ColorResolutionCommandPaletteFlags.Fixed
             };
 
-         colorResolution.Run(form.Image);
-         LineRemoveCommand(LineRemoveCommandType.Horizontal, form.Image);
-         LineRemoveCommand(LineRemoveCommandType.Vertical, form.Image);
+         colorResolution.Run(form.OmrImage);
+         LineRemoveCommand(LineRemoveCommandType.Horizontal, form.OmrImage);
+         LineRemoveCommand(LineRemoveCommandType.Vertical, form.OmrImage);
 
          if (!canceled && (bRecognizedSimple | bRecognizedComplex))
          {
@@ -1221,20 +1250,66 @@ namespace NfsFemaForms
 
 
 
+            ProcessForm(form, doOmr: true);
+            logger.Info($"Recognized {form.FileName} omr {form.Master?.Properties.Name}");
+            List<OcrField> fields = new List<OcrField>();
+            SaveFields(form, fields, doOmr: true);
             ProcessForm(form);
             logger.Info($"Recognized {form.FileName} {form.Master?.Properties.Name}");
-            SaveFields(form);
+            SaveFields(form, fields);
             //We have successfully recognized and processed a form
             return true;
          }
          logger.Info($"Unrecognized {form.FileName} {form.Master?.Properties.Name}");
          return false;
       }
-      public void SaveFields(FilledForm form)
+      public static void EnsurePathExists(string path)
+      {
+         // ... Set to folder path we must ensure exists.
+         try
+         {
+            // ... If the directory doesn't exist, create it.
+            if (!Directory.Exists(path))
+            {
+               Directory.CreateDirectory(path);
+            }
+         }
+         catch (Exception)
+         {
+            // Fail silently.
+         }
+      }
+
+      public void SaveFields(FilledForm form, List<OcrField> ocrFields, bool doOmr = false)
       {
          var sb = new StringBuilder();
-         sb.Append(form.Name + "\n");
+         sb.Append($"OMR={doOmr}\n");
+         sb.Append($"FormName: {form.Name}\n");
+         sb.Append($"FileName: {form.FileName}\n");
          sb.Append(form.Master.Properties.Name + "\n");
+         var fi = new FileInfo(form.FileName);
+         Debug.Assert(fi.DirectoryName != null, "fi.DirectoryName != null");
+         var outDir = Path.Combine(fi.DirectoryName, "data");
+         EnsurePathExists(outDir);
+         var fiMaster = Path.GetFileNameWithoutExtension(form.Master.Properties.Name);
+         var baseMergedName = Path.GetFileNameWithoutExtension(form.FileName) + "~" + fiMaster;
+         var jsonMergedName = Path.Combine(outDir, baseMergedName + "_merged.json");
+
+         var baseName = Path.GetFileNameWithoutExtension(form.FileName) + (doOmr ? "_omr" : "_ocr") + "~" + fiMaster;
+         var image = doOmr ? form.OmrImage : form.Image;
+         Debug.Assert(outDir != null, "outDir != null");
+         var imageName = Path.Combine(outDir, baseName + ".png");
+         var jsonName= Path.Combine(outDir, baseName + ".json");
+         var jsonName2 = Path.Combine(outDir, baseName + "_short.json");
+
+         var fieldInfo = Path.Combine(outDir, baseName + ".field_info");
+         sb.Append($"imageName: {imageName}\n");
+         sb.Append($"jsonName: {jsonName}\n");
+         sb.Append($"jsonName2: {jsonName2}\n");
+         sb.Append($"fieldInfo: {fieldInfo}\n");
+
+         rasterCodecs.Save(image, imageName, RasterImageFormat.Png, 1);
+
          if (form.ProcessingPages?[0] != null)
          {
             var fields = new FormField[form.ProcessingPages[0].Count];
@@ -1243,13 +1318,55 @@ namespace NfsFemaForms
             {
                fields[i++] = field;
             }
-            sb.Append(JsonConvert.SerializeObject(fields, Formatting.Indented));
+
+            sb.Append($"Json: {jsonName}");
+            var json = JsonConvert.SerializeObject(fields, Formatting.Indented);
+            File.WriteAllText(jsonName, json);
+            sb.Append(json);
+            OcrRecord curRecord = new OcrRecord();
+            sb = new StringBuilder();
+            var jArray = Newtonsoft.Json.Linq.JArray.Parse(json);
+            //Debug.WriteLine(jArray.Count);
+            foreach (var jToken in jArray)
+            {
+               var name = jToken.Value<string>("Name");
+               var bounds = jToken.Value<string>("Bounds");
+               var res = jToken["ResultDefault"];
+               if (res != null)
+               {
+                  if (!doOmr)
+                  {
+                     var f = new OcrField(name, "text", bounds, res);
+                     Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
+                     ocrFields.Add(f);
+                     curRecord.AddField(f);
+                  }
+               }
+               else
+               {
+                  if (doOmr)
+                  {
+                     res = jToken["Result"];
+                     var f = new OcrField(name, "omr", bounds, res);
+                     Debug.Assert(curRecord != null, nameof(curRecord) + " != null");
+                     ocrFields.Add(f);
+                     curRecord.AddField(f);
+                  }
+               }
+            }
+            File.WriteAllText(jsonName2,
+                  JsonConvert.SerializeObject(curRecord, Formatting.Indented));
+            var fieldsSort = from o in ocrFields orderby o.VariableName select o;
+            File.WriteAllText(jsonMergedName,
+               JsonConvert.SerializeObject(fieldsSort.ToArray(), Formatting.Indented));
+
          }
          else
          {
-            sb.Append("No Fields found\n");
+            sb.Append("Json: No Fields found\n");
          }
-         logger.Info(sb.ToString);
+         File.WriteAllText(fieldInfo, sb.ToString());
+         logger.Info(sb.ToString());
       }
 
       public MasterForm LoadMasterForm(string attributesFileName, string fieldsFileName)
